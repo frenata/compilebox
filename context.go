@@ -70,7 +70,11 @@ func (c *Context) run(language, code, stdinGlob string) (string, Message) {
 		return "", Message{"error", "no code submitted"}
 	}
 
-	sb := newSandbox(lang.ExecutionDetails, code, stdinGlob, c.options)
+	sb, err := newSandbox(lang.ExecutionDetails, code, stdinGlob, c.options)
+	if err != nil {
+		log.Printf("sandbox initialization error: %v", err)
+		return "", Message{"error", fmt.Sprintf("%s", err)}
+	}
 
 	output, err := sb.run()
 	if err != nil {
