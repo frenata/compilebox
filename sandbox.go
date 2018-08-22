@@ -166,7 +166,6 @@ func (s *sandbox) PrepareTmpDir() error {
 	}
 
 	// write a file for stdin
-	log.Printf("writing inputfile: %v", s.stdin)
 	err = ioutil.WriteFile(tmpFolder+"/inputFile", []byte(s.stdin), 0777)
 	if err != nil {
 		return err
@@ -197,18 +196,16 @@ func (s *sandbox) PrepareContainer() error {
 			},
 			// run the sandbox container as a specific user.
 			User: "mysql", // TODO (cw|4.29.2018) change this to a constant
-			// specify the mount point(s) for the sandbox
-			Volumes: map[string]struct{}{
-				s.options.folder + ":/usercode": struct{}{}, // TODO fill in
-			},
 			// StopTimeout:  s.options.timeout, // TODO this needs to be a *int ...
-			AttachStdout: true,
-			AttachStderr: true,
-			Tty:          true,
+			AttachStdout: true, // TODO (cw|8.21.2018) do we need this?
+			AttachStderr: true, // TODO (cw|8.21.2018) do we need this?
+			Tty:          true, // TODO (cw|8.21.2018) do we need this?
 		},
 		&container.HostConfig{
 			// remove container from host once it exits
 			AutoRemove: true,
+			// specify the mount point(s) for the sandbox
+			Binds: []string{s.options.folder + ":/usercode"},
 		},
 		nil, // no network config currently
 		s.ID,
@@ -218,6 +215,7 @@ func (s *sandbox) PrepareContainer() error {
 	}
 
 	// setup stdout stream from container
+	// TODO (cw|8.21.2018) do we need this?
 	hijackedResp, err := s.docker.ContainerAttach(
 		ctx,
 		s.ID,
@@ -232,17 +230,22 @@ func (s *sandbox) PrepareContainer() error {
 	}
 
 	// start hijacking stdout/stderr
+	// TODO (cw|8.21.2018) do we need this?
 	go func() {
 		defer hijackedResp.Close()
 
 		io.Copy(os.Stdout, hijackedResp.Reader)
 	}()
 
-	// setup channels to wait for container to stop
+	// setup channels to wait for container to stop and be removed.
+	// NOTE (cw|8.21.2018) we need WaitConditionRemoved since it is apparently
+	// not enough to just wait for the process to stop. Waiting for the process
+	// to merely stop resulted in race conditions between the stdout writer in the
+	// container and this parent process...
 	s.waitChan, s.errChan = s.docker.ContainerWait(
 		context.Background(),
 		s.ID,
-		container.WaitConditionNotRunning,
+		container.WaitConditionRemoved,
 	)
 
 	return nil
@@ -273,26 +276,32 @@ func (s *sandbox) execute() (string, error) {
 	// wait for the container to stop
 	select {
 	case <-s.waitChan:
-		// successfully completed
+		// ok. the docker process has stopped and the container has been removed.
+
+		// get the errors file
 		errorBytes, err := ioutil.ReadFile(s.options.folder + "/errors")
 		if err != nil {
-			log.Println("Missing error file")
+			// there was an error reading the errors file, perhaps it is missing?
+			return "", err
+		}
+
+		// did the process error?
+		if len(errorBytes) > 0 {
+			// the user code which was run in the container errored.
+			err = fmt.Errorf("user code error: %s", errorBytes)
 
 			return "", err
 		}
 
 		outputBytes, err := ioutil.ReadFile(s.options.folder + "/completed")
 		if err != nil {
-			log.Println("Missing completed file")
-
+			// there was an error reading the completed file, perhaps it is missing?
 			return "", err
 		}
 
-		if len(errorBytes) > 0 {
-			err = fmt.Errorf("compile error: %s", errorBytes)
-		}
+		// successfully completed
 
-		return string(outputBytes), err
+		return string(outputBytes), nil
 	case err = <-s.errChan:
 		// the damn container errored
 		return "", err

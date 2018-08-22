@@ -60,7 +60,9 @@ func (c *Context) Evaluate(language, code string, stdins []string) ([]string, Me
 // input is n test calls seperated by newlines
 // input and expected MUST end in newlines
 func (c *Context) run(language, code, stdinGlob string) (string, Message) {
-	log.Printf("sandbox launching sandbox...\nLanguage: %s\nStdin: %sCode: Hidden\n", language, stdinGlob)
+	log.Printf("launching new %s sandbox", language)
+	// log.Printf("launching sandbox...\nLanguage: %s\nStdin: %sCode: Hidden\n", language, stdinGlob)
+
 	lang, ok := c.compilers[strings.ToLower(language)]
 	if !ok || lang.Disabled == "true" {
 		return "", Message{"error", "language not supported"}
@@ -76,6 +78,7 @@ func (c *Context) run(language, code, stdinGlob string) (string, Message) {
 		return "", Message{"error", fmt.Sprintf("%s", err)}
 	}
 
+	// run the new sandbox
 	output, err := sb.run()
 	if err != nil {
 		log.Printf("sandbox run error: %v", err)
